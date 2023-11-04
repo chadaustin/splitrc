@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use std::borrow::Borrow;
 use std::fmt;
 use std::marker::PhantomData;
@@ -78,6 +80,7 @@ fn deallocate<T>(ptr: &NonNull<Inner<T>>) {
     drop(unsafe { Box::from_raw(ptr.as_ptr()) });
 }
 
+/// The write half of a split reference count.
 pub struct Tx<T: Notify> {
     ptr: NonNull<Inner<T>>,
     phantom: PhantomData<T>,
@@ -150,6 +153,7 @@ impl<T: Notify + fmt::Display> fmt::Display for Tx<T> {
     }
 }
 
+/// The read half of a split reference count.
 pub struct Rx<T: Notify> {
     ptr: NonNull<Inner<T>>,
     phantom: PhantomData<T>,
@@ -222,6 +226,12 @@ impl<T: Notify + fmt::Display> fmt::Display for Rx<T> {
     }
 }
 
+/// Allocates a pointer holding `data` and returns a pair of references.
+///
+/// T must implement [Notify] to receive a notification when the write
+/// half or read half are dropped.
+///
+/// `data` is dropped when both halves' reference counts reach zero.
 pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
         count: AtomicU64::new(RC_INIT),
