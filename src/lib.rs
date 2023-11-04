@@ -7,6 +7,15 @@ use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+// TODO:
+// * Missing trait implementations
+// * Error
+// * Pointer
+// * Unpin
+// * Eq, PartialEq
+// * Ord, PartialOrd
+// * Hash
+
 /// Allows the reference-counted object to know when the last write
 /// reference or the last read reference is dropped.
 ///
@@ -134,6 +143,13 @@ impl<T: Notify + fmt::Debug> fmt::Debug for Tx<T> {
         fmt::Debug::fmt(self.as_ref(), f)
     }
 }
+
+impl<T: Notify + fmt::Display> fmt::Display for Tx<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
 pub struct Rx<T: Notify> {
     ptr: NonNull<Inner<T>>,
     phantom: PhantomData<T>,
@@ -200,6 +216,12 @@ impl<T: Notify + fmt::Debug> fmt::Debug for Rx<T> {
     }
 }
 
+impl<T: Notify + fmt::Display> fmt::Display for Rx<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
 pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
         count: AtomicU64::new(RC_INIT),
@@ -221,6 +243,7 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
 #[cfg(test)]
 mod tests {
     use crate as splitrc;
+    use std::fmt;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -228,6 +251,12 @@ mod tests {
     #[derive(Debug)]
     struct Unit;
     impl splitrc::Notify for Unit {}
+
+    impl fmt::Display for Unit {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt("Unit", f)
+        }
+    }
 
     #[derive(Default)]
     struct TrackNotify {
@@ -278,5 +307,14 @@ mod tests {
         let (tx, rx) = splitrc::new(Unit);
         assert_eq!("Unit", format!("{:?}", tx));
         assert_eq!("Unit", format!("{:?}", rx));
+    }
+
+    #[test]
+    fn display_formatting() {
+        assert_eq!("Unit", format!("{}", Unit));
+        assert_eq!("Unit", format!("{}", Arc::new(Unit)));
+        let (tx, rx) = splitrc::new(Unit);
+        assert_eq!("Unit", format!("{}", tx));
+        assert_eq!("Unit", format!("{}", rx));
     }
 }
