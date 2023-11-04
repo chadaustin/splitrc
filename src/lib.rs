@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr::NonNull;
 use std::process::abort;
+use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
@@ -10,22 +10,22 @@ use std::sync::atomic::Ordering;
 ///
 /// Exactly one of these functions will be called.
 pub trait Notify {
-    /// Called when the last Tx is dropped.
+    /// Called when the last [Tx] is dropped.
     ///
-    /// WARNING: This function is called during a Drop implementation.
-    /// Ensure that it does not acquire a lock that may be held during
-    /// unwinding.
+    /// WARNING: This function is called during a [Drop::drop]
+    /// implementation. To avoid deadlock, ensure that it does not
+    /// acquire a lock that may be held during unwinding.
     ///
-    /// NOTE: Only called if there are live rx references.
+    /// NOTE: Only called if there are live [Rx] references.
     fn last_tx_did_drop(&self) {}
 
-    /// Called when the last Rx is dropped.
+    /// Called when the last [Rx] is dropped.
     ///
-    /// WARNING: This function is called during a Drop implementation.
-    /// Ensure that it does not acquire a lock that may be held during
-    /// unwinding.
+    /// WARNING: This function is called during a [Drop::drop]
+    /// implementation. To avoid deadlock, ensure that it does not
+    /// acquire a lock that may be held during unwinding.
     ///
-    /// NOTE: Only called if there are live tx references.
+    /// NOTE: Only called if there are live [Tx] references.
     fn last_rx_did_drop(&self) {}
 }
 
