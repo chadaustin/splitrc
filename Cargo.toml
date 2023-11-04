@@ -8,6 +8,7 @@ description = "Thread-Safe Split Reference Counts"
 repository = "https://github.com/chadaustin/splitrc"
 keywords = ["arc", "rc", "reference-counting", "sync"]
 categories = ["memory-management"]
+rust-version = "1.56.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
