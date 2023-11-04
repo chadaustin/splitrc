@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::process::abort;
@@ -5,8 +7,8 @@ use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
-/// Allows the reference-counted object to know when the write end or
-/// read end is dropped.
+/// Allows the reference-counted object to know when the last write
+/// reference or the last read reference is dropped.
 ///
 /// Exactly one of these functions will be called.
 pub trait Notify {
@@ -67,7 +69,6 @@ fn deallocate<T>(ptr: &NonNull<Inner<T>>) {
     drop(unsafe { Box::from_raw(ptr.as_ptr()) });
 }
 
-#[derive(Debug)]
 pub struct Tx<T: Notify> {
     ptr: NonNull<Inner<T>>,
     phantom: PhantomData<T>,
@@ -116,7 +117,23 @@ impl<T: Notify> Deref for Tx<T> {
     }
 }
 
-#[derive(Debug)]
+impl<T: Notify> AsRef<T> for Tx<T> {
+    fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T: Notify> Borrow<T> for Tx<T> {
+    fn borrow(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T: Notify + fmt::Debug> fmt::Debug for Tx<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_ref(), f)
+    }
+}
 pub struct Rx<T: Notify> {
     ptr: NonNull<Inner<T>>,
     phantom: PhantomData<T>,
@@ -165,6 +182,24 @@ impl<T: Notify> Deref for Rx<T> {
     }
 }
 
+impl<T: Notify> AsRef<T> for Rx<T> {
+    fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T: Notify> Borrow<T> for Rx<T> {
+    fn borrow(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T: Notify + fmt::Debug> fmt::Debug for Rx<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_ref(), f)
+    }
+}
+
 pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
         count: AtomicU64::new(RC_INIT),
@@ -188,7 +223,9 @@ mod tests {
     use crate as splitrc;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
 
+    #[derive(Debug)]
     struct Unit;
     impl splitrc::Notify for Unit {}
 
@@ -232,5 +269,14 @@ mod tests {
         drop(tx2);
         assert!(rx.tx_did_drop.load(Ordering::Acquire));
         assert!(!rx.rx_did_drop.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn debug_formatting() {
+        assert_eq!("Unit", format!("{:?}", Unit));
+        assert_eq!("Unit", format!("{:?}", Arc::new(Unit)));
+        let (tx, rx) = splitrc::new(Unit);
+        assert_eq!("Unit", format!("{:?}", tx));
+        assert_eq!("Unit", format!("{:?}", rx));
     }
 }
