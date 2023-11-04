@@ -244,6 +244,8 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
 mod tests {
     use crate as splitrc;
     use std::fmt;
+    use std::mem;
+    use std::panic;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -316,5 +318,27 @@ mod tests {
         let (tx, rx) = splitrc::new(Unit);
         assert_eq!("Unit", format!("{}", tx));
         assert_eq!("Unit", format!("{}", rx));
+    }
+
+    #[test]
+    fn tx_panic_on_overflow() {
+        let (tx, rx) = splitrc::new(Unit);
+        drop(rx);
+
+        let result = panic::catch_unwind(|| loop {
+            mem::forget(tx.clone())
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rx_panic_on_overflow() {
+        let (tx, rx) = splitrc::new(Unit);
+        drop(tx);
+
+        let result = panic::catch_unwind(|| loop {
+            mem::forget(rx.clone())
+        });
+        assert!(result.is_err());
     }
 }
