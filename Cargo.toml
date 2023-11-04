@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT"
 description = "Thread-Safe Split Reference Counts"
 repository = "https://github.com/chadaustin/splitrc"
-keywords = ["reference counting"]
+keywords = ["arc", "rc", "reference-counting", "sync"]
 categories = ["memory-management"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
