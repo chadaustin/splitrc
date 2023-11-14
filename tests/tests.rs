@@ -98,3 +98,10 @@ fn rx_panic_on_overflow() {
     });
     assert!(result.is_err());
 }
+
+#[test]
+fn pointers_are_unpinned() {
+    let (tx, rx) = splitrc::new(Unit);
+    let _: &dyn Unpin = &tx;
+    let _: &dyn Unpin = &rx;
+}

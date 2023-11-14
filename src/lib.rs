@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering;
 // * Missing trait implementations
 // * Error
 // * Pointer
-// * Unpin
 // * Eq, PartialEq
 // * Ord, PartialOrd
 // * Hash
