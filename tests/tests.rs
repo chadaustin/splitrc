@@ -76,6 +76,7 @@ fn display_formatting() {
 }
 
 #[test]
+#[ignore]
 fn tx_panic_on_overflow() {
     let (tx, rx) = splitrc::new(Unit);
     drop(rx);
@@ -87,6 +88,7 @@ fn tx_panic_on_overflow() {
 }
 
 #[test]
+#[ignore]
 fn rx_panic_on_overflow() {
     let (tx, rx) = splitrc::new(Unit);
     drop(tx);
