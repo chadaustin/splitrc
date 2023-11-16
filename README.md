@@ -17,7 +17,7 @@ Four billion references should be plenty. Exceeding that leads to
 a panic.
 
 The pointers are arbitrarily named [Tx] and [Rx] to indicate their
-intended use in channel.
+intended use by channels.
 
 ```rust
 # struct MyValue {}
