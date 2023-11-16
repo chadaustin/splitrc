@@ -54,12 +54,13 @@ const RC_INIT: u64 = TX_INC + RX_INC;
 
 // To avoid accidental overflow (mem::forget or a 4-billion entry
 // Vec), which would lead to a user-after-free, we must detect
-// overflow. A runaway ramp allows detecting overflow early enough to
-// panic. If the runaway ramp is not long enough (that is, if tens of
-// thousands of threads simultaneously increment the reference count),
-// and the count reaches 2**32-1, then the process must abort.
-const RUNAWAY_RAMP: u32 = u32::MAX - (1 << 16);
-const RUNAWAY_MAX: u32 = u32::MAX;
+// overflow. There are two ranges an overflow that stays within the
+// panic range is allowed to undo the increment and panic. It's
+// basically not possible, but if some freak scenario causes overflow
+// into the abort zone, then the process is considered unrecoverable
+// and the only option is abort.
+const OVERFLOW_PANIC: u32 = u32::MAX - (1 << 24);
+const OVERFLOW_ABORT: u32 = u32::MAX - (1 << 16);
 
 fn tx_count(c: u64) -> u32 {
     (c >> 32) as _
@@ -107,11 +108,11 @@ impl<T: Notify> Clone for Tx<T> {
     fn clone(&self) -> Self {
         let inner = unsafe { self.ptr.as_ref() };
         let old = inner.count.fetch_add(TX_INC, Ordering::Relaxed);
-        if tx_count(old) < RUNAWAY_RAMP {
+        if tx_count(old) < OVERFLOW_PANIC {
             return Tx { ..*self };
         }
         // very cold:
-        if tx_count(old) >= RUNAWAY_MAX {
+        if tx_count(old) >= OVERFLOW_ABORT {
             abort()
         } else {
             inner.count.fetch_sub(TX_INC, Ordering::Relaxed);
@@ -180,11 +181,11 @@ impl<T: Notify> Clone for Rx<T> {
     fn clone(&self) -> Self {
         let inner = unsafe { self.ptr.as_ref() };
         let old = inner.count.fetch_add(RX_INC, Ordering::Relaxed);
-        if rx_count(old) < RUNAWAY_RAMP {
+        if rx_count(old) < OVERFLOW_PANIC {
             return Rx { ..*self };
         }
         // very cold:
-        if rx_count(old) >= RUNAWAY_MAX {
+        if rx_count(old) >= OVERFLOW_ABORT {
             abort()
         } else {
             inner.count.fetch_sub(RX_INC, Ordering::Relaxed);
