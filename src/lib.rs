@@ -59,7 +59,10 @@ const RC_INIT: u64 = TX_INC + RX_INC;
 // basically not possible, but if some freak scenario causes overflow
 // into the abort zone, then the process is considered unrecoverable
 // and the only option is abort.
-const OVERFLOW_PANIC: u32 = u32::MAX - (1 << 24);
+//
+// If the panic range starts at (1 << 31) then the hot path branch is
+// a `js' instruction.
+const OVERFLOW_PANIC: u32 = 1 << 31;
 const OVERFLOW_ABORT: u32 = u32::MAX - (1 << 16);
 
 struct SplitCount {
