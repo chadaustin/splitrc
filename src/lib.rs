@@ -62,6 +62,62 @@ const RC_INIT: u64 = TX_INC + RX_INC;
 const OVERFLOW_PANIC: u32 = u32::MAX - (1 << 24);
 const OVERFLOW_ABORT: u32 = u32::MAX - (1 << 16);
 
+struct SplitCount {
+    count: AtomicU64,
+}
+
+impl SplitCount {
+    fn new() -> Self {
+        Self {
+            count: AtomicU64::new(RC_INIT),
+        }
+    }
+
+    fn inc_tx(&self) {
+        let old = self.count.fetch_add(TX_INC, Ordering::Relaxed);
+        if tx_count(old) < OVERFLOW_PANIC {
+            return;
+        }
+        self.inc_tx_overflow(old)
+    }
+
+    #[cold]
+    fn inc_tx_overflow(&self, old: u64) {
+        if tx_count(old) >= OVERFLOW_ABORT {
+            abort()
+        } else {
+            self.count.fetch_sub(TX_INC, Ordering::Relaxed);
+            panic!("tx count overflow")
+        }
+    }
+
+    fn dec_tx(&self) -> u64 {
+        self.count.fetch_sub(TX_INC, Ordering::AcqRel)
+    }
+
+    fn inc_rx(&self) {
+        let old = self.count.fetch_add(RX_INC, Ordering::Relaxed);
+        if rx_count(old) < OVERFLOW_PANIC {
+            return;
+        }
+        self.inc_rx_overflow(old)
+    }
+
+    #[cold]
+    fn inc_rx_overflow(&self, old: u64) {
+        if rx_count(old) >= OVERFLOW_ABORT {
+            abort()
+        } else {
+            self.count.fetch_sub(RX_INC, Ordering::Relaxed);
+            panic!("rx count overflow")
+        }
+    }
+
+    fn dec_rx(&self) -> u64 {
+        self.count.fetch_sub(RX_INC, Ordering::AcqRel)
+    }
+}
+
 fn tx_count(c: u64) -> u32 {
     (c >> 32) as _
 }
@@ -71,7 +127,7 @@ fn rx_count(c: u64) -> u32 {
 }
 
 struct Inner<T> {
-    count: AtomicU64,
+    count: SplitCount,
     data: T,
 }
 
@@ -92,7 +148,7 @@ unsafe impl<T: Sync + Send + Notify> Sync for Tx<T> {}
 impl<T: Notify> Drop for Tx<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.fetch_sub(TX_INC, Ordering::AcqRel);
+        let old = inner.count.dec_tx();
         if tx_count(old) != 1 {
             return;
         }
@@ -107,17 +163,8 @@ impl<T: Notify> Drop for Tx<T> {
 impl<T: Notify> Clone for Tx<T> {
     fn clone(&self) -> Self {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.fetch_add(TX_INC, Ordering::Relaxed);
-        if tx_count(old) < OVERFLOW_PANIC {
-            return Tx { ..*self };
-        }
-        // very cold:
-        if tx_count(old) >= OVERFLOW_ABORT {
-            abort()
-        } else {
-            inner.count.fetch_sub(TX_INC, Ordering::Relaxed);
-            panic!("tx count overflow")
-        }
+        inner.count.inc_tx();
+        Tx { ..*self }
     }
 }
 
@@ -165,7 +212,7 @@ unsafe impl<T: Sync + Send + Notify> Sync for Rx<T> {}
 impl<T: Notify> Drop for Rx<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.fetch_sub(RX_INC, Ordering::AcqRel);
+        let old = inner.count.dec_rx();
         if rx_count(old) != 1 {
             return;
         }
@@ -180,17 +227,8 @@ impl<T: Notify> Drop for Rx<T> {
 impl<T: Notify> Clone for Rx<T> {
     fn clone(&self) -> Self {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.fetch_add(RX_INC, Ordering::Relaxed);
-        if rx_count(old) < OVERFLOW_PANIC {
-            return Rx { ..*self };
-        }
-        // very cold:
-        if rx_count(old) >= OVERFLOW_ABORT {
-            abort()
-        } else {
-            inner.count.fetch_sub(RX_INC, Ordering::Relaxed);
-            panic!("rx count overflow")
-        }
+        inner.count.inc_rx();
+        Rx { ..*self }
     }
 }
 
@@ -234,7 +272,7 @@ impl<T: Notify + fmt::Display> fmt::Display for Rx<T> {
 /// `data` is dropped when both halves' reference counts reach zero.
 pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
-        count: AtomicU64::new(RC_INIT),
+        count: SplitCount::new(),
         data,
     });
     let r = Box::leak(x);
