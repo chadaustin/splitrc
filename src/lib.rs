@@ -94,8 +94,16 @@ impl SplitCount {
         }
     }
 
-    fn dec_tx(&self) -> u64 {
-        self.count.fetch_sub(TX_INC, Ordering::AcqRel)
+    #[inline]
+    fn dec_tx(&self) -> DecrementAction {
+        let old = self.count.fetch_sub(TX_INC, Ordering::AcqRel);
+        if tx_count(old) != 1 {
+            DecrementAction::Nothing
+        } else if rx_count(old) != 0 {
+            DecrementAction::Notify
+        } else {
+            DecrementAction::Drop
+        }
     }
 
     fn inc_rx(&self) {
@@ -116,9 +124,23 @@ impl SplitCount {
         }
     }
 
-    fn dec_rx(&self) -> u64 {
-        self.count.fetch_sub(RX_INC, Ordering::AcqRel)
+    #[inline]
+    fn dec_rx(&self) -> DecrementAction {
+        let old = self.count.fetch_sub(RX_INC, Ordering::AcqRel);
+        if rx_count(old) != 1 {
+            DecrementAction::Nothing
+        } else if tx_count(old) != 0 {
+            DecrementAction::Notify
+        } else {
+            DecrementAction::Drop
+        }
     }
+}
+
+enum DecrementAction {
+    Nothing,
+    Notify,
+    Drop,
 }
 
 fn tx_count(c: u64) -> u32 {
@@ -151,14 +173,10 @@ unsafe impl<T: Sync + Send + Notify> Sync for Tx<T> {}
 impl<T: Notify> Drop for Tx<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.dec_tx();
-        if tx_count(old) != 1 {
-            return;
-        }
-        if rx_count(old) == 0 {
-            deallocate(&self.ptr)
-        } else {
-            inner.data.last_tx_did_drop()
+        match inner.count.dec_tx() {
+            DecrementAction::Nothing => (),
+            DecrementAction::Notify => inner.data.last_tx_did_drop(),
+            DecrementAction::Drop => deallocate(&self.ptr),
         }
     }
 }
@@ -215,14 +233,10 @@ unsafe impl<T: Sync + Send + Notify> Sync for Rx<T> {}
 impl<T: Notify> Drop for Rx<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.ptr.as_ref() };
-        let old = inner.count.dec_rx();
-        if rx_count(old) != 1 {
-            return;
-        }
-        if tx_count(old) == 0 {
-            deallocate(&self.ptr)
-        } else {
-            inner.data.last_rx_did_drop()
+        match inner.count.dec_rx() {
+            DecrementAction::Nothing => (),
+            DecrementAction::Notify => inner.data.last_rx_did_drop(),
+            DecrementAction::Drop => deallocate(&self.ptr),
         }
     }
 }
