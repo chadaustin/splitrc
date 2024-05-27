@@ -4,6 +4,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::process::abort;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
@@ -303,4 +304,9 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
             phantom: PhantomData,
         },
     )
+}
+
+pub fn pin<T: Notify>(data: T) -> (Pin<Tx<T>>, Pin<Rx<T>>) {
+    let (tx, rx) = new(data);
+    unsafe { (Pin::new_unchecked(tx), Pin::new_unchecked(rx)) }
 }

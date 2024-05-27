@@ -1,6 +1,8 @@
 use std::fmt;
+use std::marker::PhantomPinned;
 use std::mem;
 use std::panic;
+use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -104,4 +106,29 @@ fn pointers_are_unpinned() {
     let (tx, rx) = splitrc::new(Unit);
     let _: &dyn Unpin = &tx;
     let _: &dyn Unpin = &rx;
+}
+
+#[derive(Default)]
+struct MustPin {
+    v: u32,
+    tx_did_drop: AtomicBool,
+    rx_did_drop: AtomicBool,
+    _pinned: PhantomPinned,
+}
+
+impl splitrc::Notify for MustPin {
+    fn last_tx_did_drop(&self) {
+        self.tx_did_drop.store(true, Ordering::Release);
+    }
+    fn last_rx_did_drop(&self) {
+        self.rx_did_drop.store(true, Ordering::Release);
+    }
+}
+
+#[test]
+fn alloc_pinned() {
+    let (tx, rx): (Pin<splitrc::Tx<MustPin>>, Pin<splitrc::Rx<MustPin>>) =
+        splitrc::pin(Default::default());
+    assert_eq!(0, tx.v);
+    assert_eq!(0, rx.v);
 }
