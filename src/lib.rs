@@ -10,6 +10,9 @@ use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+#[cfg(doc)]
+use std::marker::Unpin;
+
 // TODO:
 // * Missing trait implementations
 // * Error
@@ -306,6 +309,11 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     )
 }
 
+/// Allocates a pointer holding `data` and returns a pair of pinned
+/// references.
+///
+/// The rules are the same as [new] except that the memory is pinned
+/// in place and cannot be moved again, unless `T` implements [Unpin].
 pub fn pin<T: Notify>(data: T) -> (Pin<Tx<T>>, Pin<Rx<T>>) {
     let (tx, rx) = new(data);
     unsafe { (Pin::new_unchecked(tx), Pin::new_unchecked(rx)) }
