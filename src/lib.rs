@@ -296,14 +296,15 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
         count: SplitCount::new(),
         data,
     });
-    let r = Box::leak(x);
+    // SAFETY: We just allocated the box, so it's not null.
+    let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(x)) };
     (
         Tx {
-            ptr: r.into(),
+            ptr,
             phantom: PhantomData,
         },
         Rx {
-            ptr: r.into(),
+            ptr,
             phantom: PhantomData,
         },
     )
