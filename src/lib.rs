@@ -161,7 +161,8 @@ struct Inner<T> {
 }
 
 fn deallocate<T>(ptr: &NonNull<Inner<T>>) {
-    // We brought the reference count to zero, so deallocate.
+    // SAFETY: Reference count is zero. Deallocate and leave it
+    // dangling.
     drop(unsafe { Box::from_raw(ptr.as_ptr()) });
 }
 
@@ -176,6 +177,7 @@ unsafe impl<T: Sync + Send + Notify> Sync for Tx<T> {}
 
 impl<T: Notify> Drop for Tx<T> {
     fn drop(&mut self) {
+        // SAFETY: We do not create a &mut to Inner.
         let inner = unsafe { self.ptr.as_ref() };
         match inner.count.dec_tx() {
             DecrementAction::Nothing => (),
@@ -187,6 +189,7 @@ impl<T: Notify> Drop for Tx<T> {
 
 impl<T: Notify> Clone for Tx<T> {
     fn clone(&self) -> Self {
+        // SAFETY: We do not create a &mut to Inner.
         let inner = unsafe { self.ptr.as_ref() };
         inner.count.inc_tx();
         Tx { ..*self }
@@ -197,6 +200,7 @@ impl<T: Notify> Deref for Tx<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: We know ptr is valid and do not create &mut.
         &unsafe { self.ptr.as_ref() }.data
     }
 }
@@ -236,6 +240,7 @@ unsafe impl<T: Sync + Send + Notify> Sync for Rx<T> {}
 
 impl<T: Notify> Drop for Rx<T> {
     fn drop(&mut self) {
+        // SAFETY: We do not create a &mut to Inner.
         let inner = unsafe { self.ptr.as_ref() };
         match inner.count.dec_rx() {
             DecrementAction::Nothing => (),
@@ -247,6 +252,7 @@ impl<T: Notify> Drop for Rx<T> {
 
 impl<T: Notify> Clone for Rx<T> {
     fn clone(&self) -> Self {
+        // SAFETY: We do not create a &mut to Inner.
         let inner = unsafe { self.ptr.as_ref() };
         inner.count.inc_rx();
         Rx { ..*self }
@@ -257,6 +263,7 @@ impl<T: Notify> Deref for Rx<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: We know ptr is valid and do not create &mut.
         &unsafe { self.ptr.as_ref() }.data
     }
 }
@@ -317,5 +324,6 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
 /// in place and cannot be moved again, unless `T` implements [Unpin].
 pub fn pin<T: Notify>(data: T) -> (Pin<Tx<T>>, Pin<Rx<T>>) {
     let (tx, rx) = new(data);
+    // SAFETY: data is never moved again
     unsafe { (Pin::new_unchecked(tx), Pin::new_unchecked(rx)) }
 }
