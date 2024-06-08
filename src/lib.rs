@@ -156,8 +156,10 @@ fn rx_count(c: u64) -> u32 {
 }
 
 struct Inner<T> {
-    count: SplitCount,
     data: T,
+    // Deref is more common than reference counting, so hint to the
+    // compiler that the count should be stored at the end.
+    count: SplitCount,
 }
 
 fn deallocate<T>(ptr: &NonNull<Inner<T>>) {
