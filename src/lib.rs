@@ -26,6 +26,12 @@ use std::marker::Unpin;
 ///
 /// Exactly one of these functions will be called.
 pub trait Notify {
+    /// Called when the last [Tx] is dropped. By default, delegates to
+    /// [Notify::last_tx_did_drop].
+    fn last_tx_did_drop_pinned(self: Pin<&Self>) {
+        self.get_ref().last_tx_did_drop()
+    }
+
     /// Called when the last [Tx] is dropped.
     ///
     /// WARNING: This function is called during a [Drop::drop]
@@ -34,6 +40,12 @@ pub trait Notify {
     ///
     /// NOTE: Only called if there are live [Rx] references.
     fn last_tx_did_drop(&self) {}
+
+    /// Called when the last [Rx] is dropped. By default, delegates to
+    /// [Notify::last_rx_did_drop].
+    fn last_rx_did_drop_pinned(self: Pin<&Self>) {
+        self.get_ref().last_rx_did_drop()
+    }
 
     /// Called when the last [Rx] is dropped.
     ///
@@ -183,7 +195,10 @@ impl<T: Notify> Drop for Tx<T> {
         let inner = unsafe { self.ptr.as_ref() };
         match inner.count.dec_tx() {
             DecrementAction::Nothing => (),
-            DecrementAction::Notify => inner.data.last_tx_did_drop(),
+            DecrementAction::Notify => {
+                // SAFETY: data is never moved
+                unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned()
+            }
             DecrementAction::Drop => deallocate(&self.ptr),
         }
     }
@@ -246,7 +261,10 @@ impl<T: Notify> Drop for Rx<T> {
         let inner = unsafe { self.ptr.as_ref() };
         match inner.count.dec_rx() {
             DecrementAction::Nothing => (),
-            DecrementAction::Notify => inner.data.last_rx_did_drop(),
+            DecrementAction::Notify => {
+                // SAFETY: data is never moved
+                unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned()
+            }
             DecrementAction::Drop => deallocate(&self.ptr),
         }
     }

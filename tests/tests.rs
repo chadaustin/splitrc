@@ -116,12 +116,22 @@ struct MustPin {
     _pinned: PhantomPinned,
 }
 
-impl splitrc::Notify for MustPin {
-    fn last_tx_did_drop(&self) {
+impl MustPin {
+    fn drop_tx(self: Pin<&Self>) {
         self.tx_did_drop.store(true, Ordering::Release);
     }
-    fn last_rx_did_drop(&self) {
+
+    fn drop_rx(self: Pin<&Self>) {
         self.rx_did_drop.store(true, Ordering::Release);
+    }
+}
+
+impl splitrc::Notify for MustPin {
+    fn last_tx_did_drop_pinned(self: Pin<&Self>) {
+        self.drop_tx()
+    }
+    fn last_rx_did_drop_pinned(self: Pin<&Self>) {
+        self.drop_rx()
     }
 }
 
@@ -131,4 +141,22 @@ fn alloc_pinned() {
         splitrc::pin(Default::default());
     assert_eq!(0, tx.v);
     assert_eq!(0, rx.v);
+}
+
+#[test]
+fn drop_tx_pinned() {
+    let (tx, rx): (Pin<splitrc::Tx<MustPin>>, Pin<splitrc::Rx<MustPin>>) =
+        splitrc::pin(Default::default());
+    assert_eq!(false, tx.tx_did_drop.load(Ordering::Acquire));
+    drop(tx);
+    assert_eq!(true, rx.tx_did_drop.load(Ordering::Acquire));
+}
+
+#[test]
+fn drop_rx_pinned() {
+    let (tx, rx): (Pin<splitrc::Tx<MustPin>>, Pin<splitrc::Rx<MustPin>>) =
+        splitrc::pin(Default::default());
+    assert_eq!(false, rx.rx_did_drop.load(Ordering::Acquire));
+    drop(rx);
+    assert_eq!(true, tx.rx_did_drop.load(Ordering::Acquire));
 }
