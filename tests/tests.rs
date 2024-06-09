@@ -4,6 +4,7 @@ use std::mem;
 use std::panic;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -159,4 +160,38 @@ fn drop_rx_pinned() {
     assert_eq!(false, rx.rx_did_drop.load(Ordering::Acquire));
     drop(rx);
     assert_eq!(true, tx.rx_did_drop.load(Ordering::Acquire));
+}
+
+struct Count<'a> {
+    count: &'a AtomicU64,
+}
+
+impl splitrc::Notify for Count<'_> {}
+
+#[test]
+fn stress() {
+    const T: usize = 256;
+    let count = AtomicU64::new(0);
+    let (tx, rx) = splitrc::new(Count { count: &count });
+
+    std::thread::scope(move |s| {
+        for _ in 0..T {
+            s.spawn({
+                let tx = tx.clone();
+                move || {
+                    tx.count.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            s.spawn({
+                let rx = rx.clone();
+                move || {
+                    rx.count.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        }
+        drop(tx);
+        drop(rx);
+    });
+
+    assert_eq!((T + T) as u64, count.load(Ordering::Acquire));
 }
