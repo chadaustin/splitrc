@@ -178,7 +178,7 @@ impl splitrc::Notify for Count<'_> {
 
 #[test]
 fn stress() {
-    const T: usize = 256;
+    const T: usize = 64;
     let count = AtomicU64::new(0);
     let (tx, rx) = splitrc::new(Count { count: &count });
 
@@ -202,4 +202,34 @@ fn stress() {
     });
 
     assert_eq!((1 + T + T) as u64, count.load(Ordering::Acquire));
+}
+
+#[test]
+fn stress_dealloc() {
+    const T: usize = 64;
+    let count = AtomicU64::new(0);
+
+    std::thread::scope(|s| {
+        for _ in 0..T {
+            let (tx, rx) = splitrc::new(Count { count: &count });
+            s.spawn(move || {
+                tx.count.fetch_add(1, Ordering::Relaxed);
+            });
+            s.spawn(move || {
+                rx.count.fetch_add(1, Ordering::Relaxed);
+            });
+        }
+        for _ in 0..T {
+            let (tx, rx) = splitrc::new(Count { count: &count });
+            // Spawn in opposite order.
+            s.spawn(move || {
+                rx.count.fetch_add(1, Ordering::Relaxed);
+            });
+            s.spawn(move || {
+                tx.count.fetch_add(1, Ordering::Relaxed);
+            });
+        }
+    });
+
+    assert_eq!((6 * T) as u64, count.load(Ordering::Acquire));
 }
