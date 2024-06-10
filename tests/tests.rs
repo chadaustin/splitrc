@@ -166,7 +166,15 @@ struct Count<'a> {
     count: &'a AtomicU64,
 }
 
-impl splitrc::Notify for Count<'_> {}
+impl splitrc::Notify for Count<'_> {
+    fn last_tx_did_drop(&self) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn last_rx_did_drop(&self) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 #[test]
 fn stress() {
@@ -193,5 +201,5 @@ fn stress() {
         drop(rx);
     });
 
-    assert_eq!((T + T) as u64, count.load(Ordering::Acquire));
+    assert_eq!((1 + T + T) as u64, count.load(Ordering::Acquire));
 }
