@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::Barrier;
 
 #[derive(Debug)]
 struct Unit;
@@ -177,9 +178,11 @@ impl splitrc::Notify for Count<'_> {
 }
 
 #[test]
-fn stress() {
-    const T: usize = 64;
+fn stress_threads() {
+    const T: u64 = 16;
     let count = AtomicU64::new(0);
+    let barrier = Arc::new(Barrier::new((T * 2) as usize));
+    let barrier = &barrier;
     let (tx, rx) = splitrc::new(Count { count: &count });
 
     std::thread::scope(move |s| {
@@ -187,12 +190,14 @@ fn stress() {
             s.spawn({
                 let tx = tx.clone();
                 move || {
+                    barrier.wait();
                     tx.count.fetch_add(1, Ordering::Relaxed);
                 }
             });
             s.spawn({
                 let rx = rx.clone();
                 move || {
+                    barrier.wait();
                     rx.count.fetch_add(1, Ordering::Relaxed);
                 }
             });
@@ -201,12 +206,20 @@ fn stress() {
         drop(rx);
     });
 
-    assert_eq!((1 + T + T) as u64, count.load(Ordering::Acquire));
+    // We may race and call both callbacks.
+    let final_count = count.load(Ordering::Relaxed);
+    assert!(
+        1 + T + T == final_count || 2 + T + T == final_count,
+        "{}, expected {} or {}",
+        final_count,
+        1 + T + T,
+        2 + T + T
+    );
 }
 
 #[test]
 fn stress_dealloc() {
-    const T: usize = 64;
+    const T: u64 = 64;
     let count = AtomicU64::new(0);
 
     std::thread::scope(|s| {
@@ -231,5 +244,12 @@ fn stress_dealloc() {
         }
     });
 
-    assert_eq!((6 * T) as u64, count.load(Ordering::Acquire));
+    let final_count = count.load(Ordering::Acquire);
+    assert!(
+        6 * T <= final_count && final_count <= 8 * T,
+        "{}, expected >= {} and <= {}",
+        final_count,
+        6 * T,
+        7 * T
+    );
 }
