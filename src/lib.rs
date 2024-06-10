@@ -174,10 +174,19 @@ struct Inner<T> {
     count: SplitCount,
 }
 
-fn deallocate<T>(ptr: &NonNull<Inner<T>>) {
-    // SAFETY: Reference count is zero. Deallocate and leave it
+fn deallocate<T>(ptr: NonNull<Inner<T>>) {
+    // drop(unsafe { Box::from_raw(ptr.as_ptr()) }); The following
+    // should be equivalent to the above line, but for some reason I
+    // don't understand, the following passes MIRI but the above
+    // doesn't.
+
+    // SAFETY: Reference count is zero. Deallocate and leave the pointer
     // dangling.
-    drop(unsafe { Box::from_raw(ptr.as_ptr()) });
+    unsafe {
+        let ptr = ptr.as_ptr();
+        std::ptr::drop_in_place(ptr);
+        std::alloc::dealloc(ptr as *mut u8, std::alloc::Layout::new::<Inner<T>>());
+    }
 }
 
 /// The write half of a split reference count.
@@ -199,7 +208,7 @@ impl<T: Notify> Drop for Tx<T> {
                 // SAFETY: data is never moved
                 unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned()
             }
-            DecrementAction::Drop => deallocate(&self.ptr),
+            DecrementAction::Drop => deallocate(self.ptr),
         }
     }
 }
@@ -265,7 +274,7 @@ impl<T: Notify> Drop for Rx<T> {
                 // SAFETY: data is never moved
                 unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned()
             }
-            DecrementAction::Drop => deallocate(&self.ptr),
+            DecrementAction::Drop => deallocate(self.ptr),
         }
     }
 }
