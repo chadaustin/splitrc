@@ -177,7 +177,7 @@ struct Inner<T> {
     // Deref is more common than reference counting, so hint to the
     // compiler that the count should be stored at the end.
     count: SplitCount,
-    // Flags to negotiate who deallocates concurrently with
+    // Flags to negotiate who deallocates if notify and drop race.
     // TODO: Fold these bits into SplitCount.
     flags: AtomicU8,
 }
