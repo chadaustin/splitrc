@@ -1,4 +1,3 @@
-use std::fmt;
 use std::marker::PhantomPinned;
 use std::mem;
 use std::panic;
@@ -9,30 +8,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Barrier;
 
-#[derive(Debug)]
-struct Unit;
-impl splitrc::Notify for Unit {}
+mod fixture;
 
-impl fmt::Display for Unit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt("Unit", f)
-    }
-}
-
-#[derive(Default)]
-struct TrackNotify {
-    tx_did_drop: AtomicBool,
-    rx_did_drop: AtomicBool,
-}
-
-impl splitrc::Notify for TrackNotify {
-    fn last_tx_did_drop(&self) {
-        self.tx_did_drop.store(true, Ordering::Release);
-    }
-    fn last_rx_did_drop(&self) {
-        self.rx_did_drop.store(true, Ordering::Release);
-    }
-}
+use fixture::TrackNotify;
+use fixture::Unit;
 
 #[test]
 fn new_and_delete() {

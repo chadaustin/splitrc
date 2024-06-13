@@ -7,8 +7,13 @@ use std::ops::Deref;
 use std::pin::Pin;
 use std::process::abort;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+
+#[cfg(loom)]
+use loom::sync::atomic::AtomicU64;
+
+#[cfg(not(loom))]
+use std::sync::atomic::AtomicU64;
 
 #[cfg(doc)]
 use std::marker::Unpin;
