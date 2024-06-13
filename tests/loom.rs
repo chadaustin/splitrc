@@ -53,3 +53,29 @@ fn racing_drop() {
         });
     })
 }
+
+#[test]
+#[ignore = "very slow"]
+fn racing_drop_4_threads() {
+    loom::model(|| {
+        let (tx1, rx1) = splitrc::new(TrackNotify::default());
+        let tx2 = tx1.clone();
+        let rx2 = rx1.clone();
+        loom::thread::spawn(move || {
+            _ = tx1.rx_did_drop.load(Ordering::Acquire);
+            drop(tx1);
+        });
+        loom::thread::spawn(move || {
+            _ = tx2.rx_did_drop.load(Ordering::Acquire);
+            drop(tx2);
+        });
+        loom::thread::spawn(move || {
+            _ = rx1.tx_did_drop.load(Ordering::Acquire);
+            drop(rx1);
+        });
+        loom::thread::spawn(move || {
+            _ = rx2.tx_did_drop.load(Ordering::Acquire);
+            drop(rx2);
+        });
+    })
+}

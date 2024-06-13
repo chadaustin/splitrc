@@ -10,10 +10,10 @@ use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
 #[cfg(loom)]
-use loom::sync::atomic::AtomicU64;
+use loom::sync::atomic::{AtomicU64, AtomicU8};
 
 #[cfg(not(loom))]
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicU8};
 
 #[cfg(doc)]
 use std::marker::Unpin;
@@ -177,7 +177,13 @@ struct Inner<T> {
     // Deref is more common than reference counting, so hint to the
     // compiler that the count should be stored at the end.
     count: SplitCount,
+    // Flags to negotiate who deallocates concurrently with
+    // TODO: Fold these bits into SplitCount.
+    flags: AtomicU8,
 }
+
+const FLAG_NOTIFY: u8 = 1;
+const FLAG_DROP: u8 = 2;
 
 fn deallocate<T>(ptr: NonNull<Inner<T>>) {
     // drop(unsafe { Box::from_raw(ptr.as_ptr()) }); The following
@@ -210,10 +216,23 @@ impl<T: Notify> Drop for Tx<T> {
         match inner.count.dec_tx() {
             DecrementAction::Nothing => (),
             DecrementAction::Notify => {
-                // SAFETY: data is never moved
-                unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned()
+                let flags = inner.flags.fetch_or(FLAG_NOTIFY, Ordering::AcqRel);
+                if flags & FLAG_DROP == 0 {
+                    // SAFETY: data is never moved
+                    unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned();
+                    // Check again in case drop Rx raced.
+                    let flags = inner.flags.fetch_and(!FLAG_NOTIFY, Ordering::AcqRel);
+                    if flags & FLAG_DROP != 0 {
+                        deallocate(self.ptr);
+                    }
+                }
             }
-            DecrementAction::Drop => deallocate(self.ptr),
+            DecrementAction::Drop => {
+                let flags = inner.flags.fetch_or(FLAG_DROP, Ordering::AcqRel);
+                if flags & FLAG_NOTIFY == 0 {
+                    deallocate(self.ptr);
+                }
+            }
         }
     }
 }
@@ -276,10 +295,23 @@ impl<T: Notify> Drop for Rx<T> {
         match inner.count.dec_rx() {
             DecrementAction::Nothing => (),
             DecrementAction::Notify => {
-                // SAFETY: data is never moved
-                unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned()
+                let flags = inner.flags.fetch_or(FLAG_NOTIFY, Ordering::AcqRel);
+                if flags & FLAG_DROP == 0 {
+                    // SAFETY: data is never moved
+                    unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned();
+                    // Check again in case drop Tx raced.
+                    let flags = inner.flags.fetch_and(!FLAG_NOTIFY, Ordering::AcqRel);
+                    if flags & FLAG_DROP != 0 {
+                        deallocate(self.ptr);
+                    }
+                }
             }
-            DecrementAction::Drop => deallocate(self.ptr),
+            DecrementAction::Drop => {
+                let flags = inner.flags.fetch_or(FLAG_DROP, Ordering::AcqRel);
+                if flags & FLAG_NOTIFY == 0 {
+                    deallocate(self.ptr);
+                }
+            }
         }
     }
 }
@@ -336,6 +368,7 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
         count: SplitCount::new(),
         data,
+        flags: AtomicU8::new(0),
     });
     // SAFETY: We just allocated the box, so it's not null.
     let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(x)) };

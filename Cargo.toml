@@ -16,3 +16,6 @@ rust-version = "1.56.1"
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.7.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
