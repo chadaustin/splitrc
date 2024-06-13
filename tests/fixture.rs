@@ -31,3 +31,13 @@ impl splitrc::Notify for TrackNotify {
         self.rx_did_drop.store(true, Ordering::Release);
     }
 }
+
+impl TrackNotify {
+    // ASAN, TSAN, and Loom tests must read the stored values.
+    pub fn access(&self) -> (bool, bool) {
+        (
+            self.tx_did_drop.load(Ordering::Acquire),
+            self.rx_did_drop.load(Ordering::Acquire),
+        )
+    }
+}

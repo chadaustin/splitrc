@@ -43,29 +43,8 @@ fn drop_tx_notifies() {
 fn racing_drop() {
     loom::model(|| {
         let (tx, rx) = splitrc::new(TrackNotify::default());
-        loom::thread::spawn(move || {
-            _ = tx.rx_did_drop.load(Ordering::Acquire);
-            drop(tx);
-        });
-        loom::thread::spawn(move || {
-            _ = rx.tx_did_drop.load(Ordering::Acquire);
-            drop(rx);
-        });
-    })
-}
-
-#[test]
-fn racing_drop_two_rx() {
-    loom::model(|| {
-        let (tx, rx1) = splitrc::new(TrackNotify::default());
-        let rx2 = rx1.clone();
-        drop(tx);
-        loom::thread::spawn(move || {
-            rx1.tx_did_drop.load(Ordering::Acquire);
-        });
-        loom::thread::spawn(move || {
-            rx2.tx_did_drop.load(Ordering::Acquire);
-        });
+        loom::thread::spawn(move || tx.access());
+        loom::thread::spawn(move || rx.access());
     })
 }
 
@@ -75,12 +54,19 @@ fn racing_drop_two_tx() {
         let (tx1, rx) = splitrc::new(TrackNotify::default());
         let tx2 = tx1.clone();
         drop(rx);
-        loom::thread::spawn(move || {
-            tx1.rx_did_drop.load(Ordering::Acquire);
-        });
-        loom::thread::spawn(move || {
-            tx2.tx_did_drop.load(Ordering::Acquire);
-        });
+        loom::thread::spawn(move || tx1.access());
+        loom::thread::spawn(move || tx2.access());
+    })
+}
+
+#[test]
+fn racing_drop_two_rx() {
+    loom::model(|| {
+        let (tx, rx1) = splitrc::new(TrackNotify::default());
+        let rx2 = rx1.clone();
+        drop(tx);
+        loom::thread::spawn(move || rx1.access());
+        loom::thread::spawn(move || rx2.access());
     })
 }
 
@@ -91,21 +77,9 @@ fn racing_drop_4_threads() {
         let (tx1, rx1) = splitrc::new(TrackNotify::default());
         let tx2 = tx1.clone();
         let rx2 = rx1.clone();
-        loom::thread::spawn(move || {
-            _ = tx1.rx_did_drop.load(Ordering::Acquire);
-            drop(tx1);
-        });
-        loom::thread::spawn(move || {
-            _ = tx2.rx_did_drop.load(Ordering::Acquire);
-            drop(tx2);
-        });
-        loom::thread::spawn(move || {
-            _ = rx1.tx_did_drop.load(Ordering::Acquire);
-            drop(rx1);
-        });
-        loom::thread::spawn(move || {
-            _ = rx2.tx_did_drop.load(Ordering::Acquire);
-            drop(rx2);
-        });
+        loom::thread::spawn(move || tx1.access());
+        loom::thread::spawn(move || tx2.access());
+        loom::thread::spawn(move || rx1.access());
+        loom::thread::spawn(move || rx2.access());
     })
 }
