@@ -10,10 +10,10 @@ use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicU64, AtomicU8};
+use loom::sync::atomic::AtomicU64;
 
 #[cfg(not(loom))]
-use std::sync::atomic::{AtomicU64, AtomicU8};
+use std::sync::atomic::AtomicU64;
 
 #[cfg(doc)]
 use std::marker::Unpin;
@@ -62,18 +62,43 @@ pub trait Notify {
     fn last_rx_did_drop(&self) {}
 }
 
-// Two 32-bit reference counts are encoded in a single atomic 64-bit.
-// 32 bits are enough for reasonable use. That is, four billion
-// incoming references to a single object is likely an accident.
+// Encoding, big-endian:
+// * 31-bit tx count
+// * 31-bit rx count
+// * 2-bit drop count, dealloc == 2
+//
+// 31 bits is plenty for reasonable use. That is, two billion incoming
+// references to a single object is likely an accident.
 //
 // Rust compiles AtomicU64 operations to a CAS loop on 32-bit ARM and
 // x86. That's acceptable.
 
-const TX_INC: u64 = 1 << 32;
-const RX_INC: u64 = 1;
-const RC_INIT: u64 = TX_INC + RX_INC;
+const TX_SHIFT: u8 = 33;
+const RX_SHIFT: u8 = 2;
+const DC_SHIFT: u8 = 0;
 
-// To avoid accidental overflow (mem::forget or a 4-billion entry
+const TX_MASK: u32 = (1 << 31) - 1;
+const RX_MASK: u32 = (1 << 31) - 1;
+const DC_MASK: u8 = 3;
+
+const TX_INC: u64 = 1 << TX_SHIFT;
+const RX_INC: u64 = 1 << RX_SHIFT;
+const DC_INC: u64 = 1 << DC_SHIFT;
+const RC_INIT: u64 = TX_INC + RX_INC; // drop count = 0
+
+fn tx_count(c: u64) -> u32 {
+    (c >> TX_SHIFT) as u32 & TX_MASK
+}
+
+fn rx_count(c: u64) -> u32 {
+    (c >> RX_SHIFT) as u32 & RX_MASK
+}
+
+fn drop_count(c: u64) -> u8 {
+    (c >> DC_SHIFT) as u8 & DC_MASK
+}
+
+// To avoid accidental overflow (mem::forget or a 2-billion entry
 // Vec), which would lead to a user-after-free, we must detect
 // overflow. There are two ranges an overflow that stays within the
 // panic range is allowed to undo the increment and panic. It's
@@ -81,24 +106,27 @@ const RC_INIT: u64 = TX_INC + RX_INC;
 // into the abort zone, then the process is considered unrecoverable
 // and the only option is abort.
 //
-// If the panic range starts at (1 << 31) then the hot path branch is
+// If the panic range could start at (1 << 31) then the hot path branch is
 // a `js' instruction.
-const OVERFLOW_PANIC: u32 = 1 << 31;
+//
+// Another approach is to increment with a CAS, and then we don't need
+// ranges at all. But that might be more expensive. Are uncontended
+// CAS on Apple Silicon and AMD Zen as fast as uncontended increment?
+const OVERFLOW_PANIC: u32 = 1 << 30;
 const OVERFLOW_ABORT: u32 = u32::MAX - (1 << 16);
 
-struct SplitCount {
-    count: AtomicU64,
-}
+struct SplitCount(AtomicU64);
 
 impl SplitCount {
     fn new() -> Self {
-        Self {
-            count: AtomicU64::new(RC_INIT),
-        }
+        Self(AtomicU64::new(RC_INIT))
     }
 
     fn inc_tx(&self) {
-        let old = self.count.fetch_add(TX_INC, Ordering::Relaxed);
+        // SAFETY: Increment always occurs from an existing reference,
+        // and passing a reference to another thread is sufficiently
+        // fenced, so relaxed is all that's necessary to increment.
+        let old = self.0.fetch_add(TX_INC, Ordering::Relaxed);
         if tx_count(old) < OVERFLOW_PANIC {
             return;
         }
@@ -110,25 +138,47 @@ impl SplitCount {
         if tx_count(old) >= OVERFLOW_ABORT {
             abort()
         } else {
-            self.count.fetch_sub(TX_INC, Ordering::Relaxed);
+            self.0.fetch_sub(TX_INC, Ordering::Relaxed);
             panic!("tx count overflow")
         }
     }
 
     #[inline]
     fn dec_tx(&self) -> DecrementAction {
-        let old = self.count.fetch_sub(TX_INC, Ordering::AcqRel);
-        if tx_count(old) != 1 {
-            DecrementAction::Nothing
-        } else if rx_count(old) != 0 {
-            DecrementAction::Notify
-        } else {
-            DecrementAction::Drop
-        }
+        let mut action = DecrementAction::Nothing;
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |mut current| {
+                current -= TX_INC;
+                if tx_count(current) == 0 {
+                    // We are the last tx reference. Should we drop or
+                    // notify?
+                    action = if rx_count(current) == 0 {
+                        // drop_count is either 0 or 1 here
+                        current += DC_INC;
+                        if drop_count(current) == 1 {
+                            DecrementAction::Nothing
+                        } else {
+                            DecrementAction::Drop
+                        }
+                    } else {
+                        DecrementAction::Notify
+                    }
+                } else {
+                    // We don't need to reset `action` because no
+                    // conflicting update will increase tx_count
+                    // again.
+                }
+                Some(current)
+            })
+            .unwrap();
+        action
     }
 
     fn inc_rx(&self) {
-        let old = self.count.fetch_add(RX_INC, Ordering::Relaxed);
+        // SAFETY: Increment always occurs from an existing reference,
+        // and passing a reference to another thread is sufficiently
+        // fenced, so relaxed is all that's necessary to increment.
+        let old = self.0.fetch_add(RX_INC, Ordering::Relaxed);
         if rx_count(old) < OVERFLOW_PANIC {
             return;
         }
@@ -140,21 +190,45 @@ impl SplitCount {
         if rx_count(old) >= OVERFLOW_ABORT {
             abort()
         } else {
-            self.count.fetch_sub(RX_INC, Ordering::Relaxed);
+            self.0.fetch_sub(RX_INC, Ordering::Relaxed);
             panic!("rx count overflow")
         }
     }
 
     #[inline]
     fn dec_rx(&self) -> DecrementAction {
-        let old = self.count.fetch_sub(RX_INC, Ordering::AcqRel);
-        if rx_count(old) != 1 {
-            DecrementAction::Nothing
-        } else if tx_count(old) != 0 {
-            DecrementAction::Notify
-        } else {
-            DecrementAction::Drop
-        }
+        let mut action = DecrementAction::Nothing;
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |mut current| {
+                current -= RX_INC;
+                if rx_count(current) == 0 {
+                    // We are the last rx reference. Should we drop or
+                    // notify?
+                    action = if tx_count(current) == 0 {
+                        // drop_count is either 0 or 1 here
+                        current += DC_INC;
+                        if drop_count(current) == 1 {
+                            DecrementAction::Nothing
+                        } else {
+                            DecrementAction::Drop
+                        }
+                    } else {
+                        DecrementAction::Notify
+                    }
+                } else {
+                    // We don't need to reset `action` because no
+                    // conflicting update will increase tx_count
+                    // again.
+                }
+                Some(current)
+            })
+            .unwrap();
+        action
+    }
+
+    /// Returns true if we should be deallocated.
+    fn inc_drop_count(&self) -> bool {
+        1 == self.0.fetch_add(DC_INC, Ordering::AcqRel)
     }
 }
 
@@ -164,26 +238,12 @@ enum DecrementAction {
     Drop,
 }
 
-fn tx_count(c: u64) -> u32 {
-    (c >> 32) as _
-}
-
-fn rx_count(c: u64) -> u32 {
-    c as _
-}
-
 struct Inner<T> {
     data: T,
     // Deref is more common than reference counting, so hint to the
     // compiler that the count should be stored at the end.
     count: SplitCount,
-    // Flags to negotiate who deallocates if notify and drop race.
-    // TODO: Fold these bits into SplitCount.
-    flags: AtomicU8,
 }
-
-const FLAG_NOTIFY: u8 = 1;
-const FLAG_DROP: u8 = 2;
 
 fn deallocate<T>(ptr: NonNull<Inner<T>>) {
     // drop(unsafe { Box::from_raw(ptr.as_ptr()) }); The following
@@ -216,22 +276,14 @@ impl<T: Notify> Drop for Tx<T> {
         match inner.count.dec_tx() {
             DecrementAction::Nothing => (),
             DecrementAction::Notify => {
-                let flags = inner.flags.fetch_or(FLAG_NOTIFY, Ordering::AcqRel);
-                if flags & FLAG_DROP == 0 {
-                    // SAFETY: data is never moved
-                    unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned();
-                    // Check again in case drop Rx raced.
-                    let flags = inner.flags.fetch_and(!FLAG_NOTIFY, Ordering::AcqRel);
-                    if flags & FLAG_DROP != 0 {
-                        deallocate(self.ptr);
-                    }
+                // SAFETY: data is never moved
+                unsafe { Pin::new_unchecked(&inner.data) }.last_tx_did_drop_pinned();
+                if inner.count.inc_drop_count() {
+                    deallocate(self.ptr);
                 }
             }
             DecrementAction::Drop => {
-                let flags = inner.flags.fetch_or(FLAG_DROP, Ordering::AcqRel);
-                if flags & FLAG_NOTIFY == 0 {
-                    deallocate(self.ptr);
-                }
+                deallocate(self.ptr);
             }
         }
     }
@@ -295,22 +347,14 @@ impl<T: Notify> Drop for Rx<T> {
         match inner.count.dec_rx() {
             DecrementAction::Nothing => (),
             DecrementAction::Notify => {
-                let flags = inner.flags.fetch_or(FLAG_NOTIFY, Ordering::AcqRel);
-                if flags & FLAG_DROP == 0 {
-                    // SAFETY: data is never moved
-                    unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned();
-                    // Check again in case drop Tx raced.
-                    let flags = inner.flags.fetch_and(!FLAG_NOTIFY, Ordering::AcqRel);
-                    if flags & FLAG_DROP != 0 {
-                        deallocate(self.ptr);
-                    }
+                // SAFETY: data is never moved
+                unsafe { Pin::new_unchecked(&inner.data) }.last_rx_did_drop_pinned();
+                if inner.count.inc_drop_count() {
+                    deallocate(self.ptr);
                 }
             }
             DecrementAction::Drop => {
-                let flags = inner.flags.fetch_or(FLAG_DROP, Ordering::AcqRel);
-                if flags & FLAG_NOTIFY == 0 {
-                    deallocate(self.ptr);
-                }
+                deallocate(self.ptr);
             }
         }
     }
@@ -368,7 +412,6 @@ pub fn new<T: Notify>(data: T) -> (Tx<T>, Rx<T>) {
     let x = Box::new(Inner {
         count: SplitCount::new(),
         data,
-        flags: AtomicU8::new(0),
     });
     // SAFETY: We just allocated the box, so it's not null.
     let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(x)) };
