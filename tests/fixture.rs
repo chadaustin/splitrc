@@ -32,6 +32,7 @@ impl splitrc::Notify for TrackNotify {
     }
 }
 
+#[allow(dead_code)]
 impl TrackNotify {
     // ASAN, TSAN, and Loom tests must read the stored values.
     pub fn access(&self) -> (bool, bool) {
