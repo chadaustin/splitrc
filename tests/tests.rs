@@ -185,15 +185,8 @@ fn stress_threads() {
         drop(rx);
     });
 
-    // We may race and call both callbacks.
     let final_count = count.load(Ordering::Relaxed);
-    assert!(
-        1 + T + T == final_count || 2 + T + T == final_count,
-        "{}, expected {} or {}",
-        final_count,
-        1 + T + T,
-        2 + T + T
-    );
+    assert_eq!(1 + T + T, final_count);
 }
 
 #[test]
@@ -224,11 +217,5 @@ fn stress_dealloc() {
     });
 
     let final_count = count.load(Ordering::Acquire);
-    assert!(
-        6 * T <= final_count && final_count <= 8 * T,
-        "{}, expected >= {} and <= {}",
-        final_count,
-        6 * T,
-        7 * T
-    );
+    assert_eq!(6 * T, final_count);
 }
