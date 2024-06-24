@@ -70,6 +70,10 @@ pub trait Notify {
 // 31 bits is plenty for reasonable use. That is, two billion incoming
 // references to a single object is likely an accident.
 //
+// The drop count allows concurrent notification on one half and drop
+// on the other to avoid racing. The last half to finish will
+// deallocate.
+//
 // Rust compiles AtomicU64 operations to a CAS loop on 32-bit ARM and
 // x86. That's acceptable.
 
@@ -112,6 +116,8 @@ fn drop_count(c: u64) -> u8 {
 // Another approach is to increment with a CAS, and then we don't need
 // ranges at all. But that might be more expensive. Are uncontended
 // CAS on Apple Silicon and AMD Zen as fast as uncontended increment?
+//
+// Under contention, probably. [TODO: link]
 const OVERFLOW_PANIC: u32 = 1 << 30;
 const OVERFLOW_ABORT: u32 = u32::MAX - (1 << 16);
 
@@ -125,7 +131,7 @@ impl SplitCount {
     fn inc_tx(&self) {
         // SAFETY: Increment always occurs from an existing reference,
         // and passing a reference to another thread is sufficiently
-        // fenced, so relaxed is all that's necessary to increment.
+        // fenced, so relaxed is all that's necessary.
         let old = self.0.fetch_add(TX_INC, Ordering::Relaxed);
         if tx_count(old) < OVERFLOW_PANIC {
             return;
@@ -153,11 +159,14 @@ impl SplitCount {
                     // We are the last tx reference. Should we drop or
                     // notify?
                     action = if rx_count(current) == 0 {
-                        // drop_count is either 0 or 1 here
                         current += DC_INC;
                         if drop_count(current) == 1 {
+                            // If drop_count was zero, the other half
+                            // is notifying and will deallocate.
                             DecrementAction::Nothing
                         } else {
+                            // If drop count was one, we are the last
+                            // half.
                             DecrementAction::Drop
                         }
                     } else {
@@ -177,7 +186,7 @@ impl SplitCount {
     fn inc_rx(&self) {
         // SAFETY: Increment always occurs from an existing reference,
         // and passing a reference to another thread is sufficiently
-        // fenced, so relaxed is all that's necessary to increment.
+        // fenced, so relaxed is all that's necessary.
         let old = self.0.fetch_add(RX_INC, Ordering::Relaxed);
         if rx_count(old) < OVERFLOW_PANIC {
             return;
@@ -208,8 +217,12 @@ impl SplitCount {
                         // drop_count is either 0 or 1 here
                         current += DC_INC;
                         if drop_count(current) == 1 {
+                            // If drop_count was zero, the other half
+                            // is notifying and will deallocate.
                             DecrementAction::Nothing
                         } else {
+                            // If drop count was one, we are the last
+                            // half.
                             DecrementAction::Drop
                         }
                     } else {
