@@ -8,11 +8,5 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-      - name: cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        uses: dtolnay/rust-toolchain@stable
+      - run: carge check
