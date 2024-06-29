@@ -65,4 +65,4 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-      - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu
+      - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --lib --bins --tests
