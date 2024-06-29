@@ -1,9 +1,39 @@
 name: Continuous Integration
 on: [push]
 jobs:
-  check:
-    name: Check
+  check-linux:
+    #name: check-linux
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo check
+
+  check-windows:
+    #name: check-linux
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo check
+
+  check-mac:
+    #name: check-linux
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo check
+
+  check-mac-intel:
+    #name: check-linux
+    runs-on: macos-13
     steps:
       - name: Checkout
         uses: actions/checkout@v4
